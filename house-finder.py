@@ -9,7 +9,9 @@ import requests
 import os
 import sys
 import unicodedata
+import webbrowser
 
+property_status = {'a': 'active', 'd': 'discarded', 't': 'tainted'}
 
 def format_name(name):
     if name:
@@ -29,15 +31,20 @@ def init(arguments):
                         help='Moneda en que se ofrece la propiedad')
     parser.add_argument('-cd', '--canditad_de_dormitorios', type=int, default=3,
                         help='Cantidad de dormitorios de la propiedad')
-    parser.add_argument('-p', '--provincia', default='cordoba', type=format_name,help='Provincia en la que se encuentra la propiedad')
-    parser.add_argument('-B', '--barrio', default=None, type=format_name, help='Barrio en la que se encuentra la propiedad')
-    parser.add_argument('-c', '--ciudad', default=None, type=format_name, help='Ciudad en la que se encuentra la propiedad')
+    parser.add_argument('-p', '--provincia', default='cordoba', type=format_name,
+                        help='Provincia en la que se encuentra la propiedad')
+    parser.add_argument('-B', '--barrio', default=None, type=format_name,
+                        help='Barrio en la que se encuentra la propiedad')
+    parser.add_argument('-c', '--ciudad', default=None, type=format_name,
+                        help='Ciudad en la que se encuentra la propiedad')
     parser.add_argument('-b', '--tipo_de_barrio', default=None,
                         choices=['abierto', 'country', 'cerrado', 'con-seguridad'],
                         help='Tipo de barrio')
     parser.add_argument('-t', '--tipo_de_unidad', default=None,
                         choices=['casa', 'duplex', 'triplex', 'chalet', 'casa-quinta', 'Cabana', 'prefabricada'],
                         help='Tipo de unidad')
+    parser.add_argument('-w', '--browser', action='store_true', help='Abrir las propiedades en un browser')
+    parser.add_argument('-r', '--remove', default=None, type=int, help='Marcar propiedad como descartada')
     parser.add_argument('--initial_link', default=None, help=argparse.SUPPRESS)
     parser.add_argument('--search', default=None, help=argparse.SUPPRESS)
     args = parser.parse_args(arguments)
@@ -120,25 +127,43 @@ def save_data(history, data, store, search):
 
 def taint_properties(properties):
     for property in properties.keys():
-        properties[property]['status'] = 'tainted'
+        if properties[property]['status'] != property_status['d']:
+            properties[property]['status'] = property_status['t']
     return properties
 
 
-def remove_tainted(properties):
+def remove_properties(properties):
     current_properties = properties.copy()
     for property in properties.keys():
-        if properties[property]['status'] == 'tainted':
+        if properties[property]['status'] == property_status['t']:
             print(f'La propiedad {property} no se encuentra mas en la lista')
             print(properties[property])
-            current_properties.pop(property)
+            # current_properties.pop(property)
     return current_properties
 
 
-def get_page_properties(announces, properties, force_print):
+def show_property(properties_displayed, headline, description, url, params):
+    print(f'{properties_displayed}- {headline}')
+    print(f'\t{description}')
+    if params.browser:
+        if properties_displayed == 1:
+            webbrowser.open_new(url)
+        else:
+            webbrowser.open_new_tab(url)
+    else:
+        print(f'\t{url}')
+
+
+def get_page_properties(announces, properties, params, properties_displayed):
+    force_print = params.mostrar_todo
+    property_type = params.tipo_de_unidad if params.tipo_de_unidad else 'propiedad'
+    operation = params.operacion
     for announce in announces:
         property = get_announcement(announce)
-        must_print = force_print
+        must_show = force_print
         if property:
+            if properties[property['id']]['status'] == property_status['d']:
+                continue
             if property['id'] not in properties.keys():
                 properties[property['id']] = {'description': property['description'],
                                               'detail': property['detail'],
@@ -148,15 +173,16 @@ def get_page_properties(announces, properties, force_print):
                                               'status': 'new',
                                               'date': f'{datetime.date.today()}'
                                               }
-                must_print = True
+                must_show = True
             else:
-                properties[property['id']]['status'] = 'remains'
-            if must_print:
-                print(
-                    f'### Aviso {property["id"]} de casa en alquiler en barrio {property["nbhd"]} a {property["price"]}')
-                print(f'\t{property["description"]}')
-                print(f'\t{property["link"]}')
-    return properties
+                if properties[property['id']]['status'] != property_status['d']:
+                    properties[property['id']]['status'] = property_status['a']
+            if must_show:
+                headline = f'Aviso {property["id"]} de {property_type} en {operation} en barrio '\
+                    f'{property["nbhd"]} a {property["price"]}'
+                show_property(properties_displayed, headline, property["description"], property["link"], params)
+                properties_displayed += 1
+    return properties_displayed
 
 
 def get_content(base_link, page_number):
@@ -174,16 +200,12 @@ def find_last_page_number(content):
     return last_page
 
 
-def main(arguments):
-    params = init(arguments)
-    history = load_history(params.propiedades)
-    properties = {}
-    if params.search in history.keys():
-        properties = history[params.search]
+def find_properties(params, properties, history):
     properties = taint_properties(properties)
 
     last_page = 1
     page_number = 1
+    properties_displayed = 1
     while page_number <= last_page:
         content = get_content(params.initial_link, page_number)
         announces_location = '/html/body/div[3]/div/div[2]/div/div[2]/div/div[2]/*'
@@ -192,11 +214,24 @@ def main(arguments):
             if last_page > 1:
                 announces_location = '/html/body/div[3]/div/div[2]/div/div[2]/div[2]/div[2]/*'
         announces = content.xpath(announces_location)
-        get_page_properties(announces, properties, params.mostrar_todo)
+        properties_displayed = get_page_properties(announces, properties, params, properties_displayed)
         page_number += 1
-    properties = remove_tainted(properties)
+    return remove_properties(properties)
+
+
+
+
+def main(arguments):
+    params = init(arguments)
+    history = load_history(params.propiedades)
+    properties = {}
+    if params.search in history.keys():
+        properties = history[params.search]
+    if params.remove:
+        if properties[str(params.remove)]:
+            properties[str(params.remove)]['status'] = property_status['d']
+    else:
+        properties = find_properties(params, properties, history)
     save_data(history, properties, params.propiedades, params.search)
-
-
 if __name__ == '__main__':
     sys.exit(main(sys.argv[1:]))
