@@ -11,7 +11,8 @@ import sys
 import unicodedata
 import webbrowser
 
-property_status = {'a': 'active', 'd': 'discarded', 't': 'tainted'}
+property_status = {'n': 'new', 'a': 'active', 'd': 'discarded', 't': 'tainted', 'r': 'removed'}
+
 
 def format_name(name):
     if name:
@@ -127,7 +128,8 @@ def save_data(history, data, store, search):
 
 def taint_properties(properties):
     for property in properties.keys():
-        if properties[property]['status'] != property_status['d']:
+        if properties[property]['status'] != property_status['d'] and \
+                properties[property]['status'] != property_status['r']:
             properties[property]['status'] = property_status['t']
     return properties
 
@@ -138,6 +140,7 @@ def remove_properties(properties):
         if properties[property]['status'] == property_status['t']:
             print(f'La propiedad {property} no se encuentra mas en la lista')
             print(properties[property])
+            current_properties[property]['status'] = property_status['r']
             # current_properties.pop(property)
     return current_properties
 
@@ -162,26 +165,25 @@ def get_page_properties(announces, properties, params, properties_displayed):
         property = get_announcement(announce)
         must_show = force_print
         if property:
-            if properties[property['id']]['status'] == property_status['d']:
-                continue
             if property['id'] not in properties.keys():
                 properties[property['id']] = {'description': property['description'],
                                               'detail': property['detail'],
                                               'nbhd': property['nbhd'],
                                               'price': property['price'],
                                               'link': property['link'],
-                                              'status': 'new',
+                                              'status': property_status['n'],
                                               'date': f'{datetime.date.today()}'
                                               }
                 must_show = True
+            elif properties[property['id']]['status'] == property_status['d']:
+                continue
             else:
-                if properties[property['id']]['status'] != property_status['d']:
-                    properties[property['id']]['status'] = property_status['a']
-            if must_show:
-                headline = f'Aviso {property["id"]} de {property_type} en {operation} en barrio '\
-                    f'{property["nbhd"]} a {property["price"]}'
-                show_property(properties_displayed, headline, property["description"], property["link"], params)
-                properties_displayed += 1
+                properties[property['id']]['status'] = property_status['a']
+        if must_show:
+            headline = f'Aviso {property["id"]} de {property_type} en {operation} en barrio ' \
+                       f'{property["nbhd"]} a {property["price"]}'
+            show_property(properties_displayed, headline, property["description"], property["link"], params)
+            properties_displayed += 1
     return properties_displayed
 
 
@@ -219,8 +221,6 @@ def find_properties(params, properties, history):
     return remove_properties(properties)
 
 
-
-
 def main(arguments):
     params = init(arguments)
     history = load_history(params.propiedades)
@@ -233,5 +233,7 @@ def main(arguments):
     else:
         properties = find_properties(params, properties, history)
     save_data(history, properties, params.propiedades, params.search)
+
+
 if __name__ == '__main__':
     sys.exit(main(sys.argv[1:]))
