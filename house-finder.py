@@ -11,7 +11,7 @@ import sys
 import unicodedata
 import webbrowser
 
-property_status = {'n': 'new', 'a': 'active', 'd': 'discarded', 't': 'tainted', 'r': 'removed'}
+estate_status = {'n': 'new', 'a': 'available', 'd': 'discarded', 't': 'tainted', 'r': 'removed'}
 
 
 def format_name(name):
@@ -20,10 +20,23 @@ def format_name(name):
         return u"".join([c for c in nfkd_form if not unicodedata.combining(c)])
 
 
+def format_status(category):
+    if category == 'todas':
+        category = [estate_status['n'], estate_status['a'], estate_status['r']]
+    elif category == 'nuevas':
+        category = [estate_status['n']]
+    elif category == 'disponibles':
+        category = [estate_status['n'], estate_status['a']]
+    elif category == 'removidas':
+        category = [estate_status['r'], estate_status['d']]
+    elif category == 'descartadas':
+        category = [estate_status['d']]
+    return category
+
+
 def init(arguments):
     parser = argparse.ArgumentParser()
     parser.add_argument('-f', '--propiedades', default='avisos.json', help='Precio mínimo de la propiedad')
-    parser.add_argument('-a', '--mostrar_todo', action='store_true', help='Mostrar todas las propiedades')
     parser.add_argument('-o', '--operacion', default='alquileres', choices=['alquileres', 'ventas'],
                         help='Especifica el tipo de operación')
     parser.add_argument('-d', '--precio_desde', type=int, default=35000, help='Precio mínimo de la propiedad')
@@ -45,10 +58,26 @@ def init(arguments):
                         choices=['casa', 'duplex', 'triplex', 'chalet', 'casa-quinta', 'Cabana', 'prefabricada'],
                         help='Tipo de unidad')
     parser.add_argument('-w', '--browser', action='store_true', help='Abrir las propiedades en un browser')
-    parser.add_argument('-r', '--remove', default=None, type=int, help='Marcar propiedad como descartada')
     parser.add_argument('--initial_link', default=None, help=argparse.SUPPRESS)
     parser.add_argument('--search', default=None, help=argparse.SUPPRESS)
+
+    subparsers = parser.add_subparsers(help='Acciones', dest='command')
+    show_parser = subparsers.add_parser("listar")
+    show_parser.add_argument('categoria', choices=['todas', 'nuevas', 'disponibles', 'removidas', 'descartadas'],
+                             default='nuevas', help='Busca y lista propiedades basandose en la caracteristica')
+    remove_parser = subparsers.add_parser("quitar")
+    remove_parser.add_argument('id', type=int,
+                               help='Busca el identificador y marca la propiedad como borrada')
+
     args = parser.parse_args(arguments)
+
+    if args.command is None:
+        args.categoria = format_status('disponibles')
+        args.command = 'listar'
+    elif args.command == 'listar':
+        if args.categoria is not None:
+            args.categoria = format_status(args.categoria)
+
     initial_link = f'https://clasificados.lavoz.com.ar/inmuebles/casas/alquileres?list=true' \
                    f'&provincia={args.provincia}&precio-desde={args.precio_desde}&precio-hasta={args.precio_hasta}' \
                    f'&moneda={args.moneda}&operacion={args.operacion}' \
@@ -74,7 +103,7 @@ def init(arguments):
 
 
 def get_announcement(announcement):
-    property = {}
+    estate = {}
     link = announcement.xpath('div[2]/div/a/@href')
     key = None
     if link:
@@ -89,13 +118,13 @@ def get_announcement(announcement):
         price = price[0].strip() if price else "consultar"
         detail = announcement.xpath('div[2]/div/div[4]/text()')
         detail = detail[0].strip() if detail else "Sin informacion adicional"
-        property = {'id': key,
-                    'description': description,
-                    'nbhd': nbhd,
-                    'price': price,
-                    'link': link,
-                    'detail': detail}
-    return property
+        estate = {'id': key,
+                  'description': description,
+                  'nbhd': nbhd,
+                  'price': price,
+                  'link': link,
+                  'detail': detail}
+    return estate
 
 
 def load_history(database):
@@ -115,41 +144,40 @@ def save_data(history, data, store, search):
         csv_writer = csv.writer(data_file)
         csv_writer.writerow([search])
         first = True
-        for property_info in data.keys():
+        for estate_info in data.keys():
             if first:
-                header = list(data[property_info].keys())
+                header = list(data[estate_info].keys())
                 header.insert(0, 'id')
                 csv_writer.writerow(header)
                 first = False
-            new_row = list(data[property_info].values())
-            new_row.insert(0, property_info)
+            new_row = list(data[estate_info].values())
+            new_row.insert(0, estate_info)
             csv_writer.writerow(new_row)
 
 
 def taint_properties(properties):
-    for property in properties.keys():
-        if properties[property]['status'] != property_status['d'] and \
-                properties[property]['status'] != property_status['r']:
-            properties[property]['status'] = property_status['t']
+    for estate in properties.keys():
+        if properties[estate]['status'] != estate_status['d'] and \
+                properties[estate]['status'] != estate_status['r']:
+            properties[estate]['status'] = estate_status['t']
     return properties
 
 
-def remove_properties(properties):
+def remove_tainted(properties):
     current_properties = properties.copy()
-    for property in properties.keys():
-        if properties[property]['status'] == property_status['t']:
-            print(f'La propiedad {property} no se encuentra mas en la lista')
-            print(properties[property])
-            current_properties[property]['status'] = property_status['r']
-            # current_properties.pop(property)
+    for estate in properties.keys():
+        if properties[estate]['status'] == estate_status['t']:
+            print(f'La propiedad {estate} no se encuentra mas en la lista')
+            print(properties[estate])
+            current_properties[estate]['status'] = estate_status['r']
     return current_properties
 
 
-def show_property(properties_displayed, headline, description, url, params):
-    print(f'{properties_displayed}- {headline}')
+def show_estate(items_shown, headline, description, url, browser):
+    print(f'{items_shown}- {headline}')
     print(f'\t{description}')
-    if params.browser:
-        if properties_displayed == 1:
+    if browser:
+        if items_shown == 1:
             webbrowser.open_new(url)
         else:
             webbrowser.open_new_tab(url)
@@ -157,34 +185,37 @@ def show_property(properties_displayed, headline, description, url, params):
         print(f'\t{url}')
 
 
-def get_page_properties(announces, properties, params, properties_displayed):
-    force_print = params.mostrar_todo
-    property_type = params.tipo_de_unidad if params.tipo_de_unidad else 'propiedad'
-    operation = params.operacion
+def get_page_estates(announces, properties):
     for announce in announces:
-        property = get_announcement(announce)
-        must_show = force_print
-        if property:
-            if property['id'] not in properties.keys():
-                properties[property['id']] = {'description': property['description'],
-                                              'detail': property['detail'],
-                                              'nbhd': property['nbhd'],
-                                              'price': property['price'],
-                                              'link': property['link'],
-                                              'status': property_status['n'],
-                                              'date': f'{datetime.date.today()}'
-                                              }
-                must_show = True
-            elif properties[property['id']]['status'] == property_status['d']:
+        estate = get_announcement(announce)
+        if estate:
+            if estate['id'] not in properties.keys():
+                properties[estate['id']] = {'description': estate['description'],
+                                            'detail': estate['detail'],
+                                            'nbhd': estate['nbhd'],
+                                            'price': estate['price'],
+                                            'link': estate['link'],
+                                            'status': estate_status['n'],
+                                            'date': f'{datetime.date.today()}'
+                                            }
+            elif properties[estate['id']]['status'] == estate_status['d']:
                 continue
             else:
-                properties[property['id']]['status'] = property_status['a']
-        if must_show:
-            headline = f'Aviso {property["id"]} de {property_type} en {operation} en barrio ' \
-                       f'{property["nbhd"]} a {property["price"]}'
-            show_property(properties_displayed, headline, property["description"], property["link"], params)
-            properties_displayed += 1
-    return properties_displayed
+                properties[estate['id']]['status'] = estate_status['a']
+    return properties
+
+
+def display_estates(properties, shown, estate_type, operation, browser):
+    items_shown = 1
+
+    for estate in properties.keys():
+        if properties[estate]['status'] in shown:
+            estate_type = estate_type if estate_type else 'propiedad'
+            headline = f'Aviso {estate} de {estate_type} en {operation} en barrio ' \
+                       f'{properties[estate]["nbhd"]} a {properties[estate]["price"]}'
+            show_estate(items_shown, headline, properties[estate]["description"], properties[estate]["link"], browser)
+            items_shown += 1
+    return items_shown
 
 
 def get_content(base_link, page_number):
@@ -202,12 +233,10 @@ def find_last_page_number(content):
     return last_page
 
 
-def find_properties(params, properties, history):
+def find_properties(params, properties):
     properties = taint_properties(properties)
-
     last_page = 1
     page_number = 1
-    properties_displayed = 1
     while page_number <= last_page:
         content = get_content(params.initial_link, page_number)
         announces_location = '/html/body/div[3]/div/div[2]/div/div[2]/div/div[2]/*'
@@ -216,9 +245,9 @@ def find_properties(params, properties, history):
             if last_page > 1:
                 announces_location = '/html/body/div[3]/div/div[2]/div/div[2]/div[2]/div[2]/*'
         announces = content.xpath(announces_location)
-        properties_displayed = get_page_properties(announces, properties, params, properties_displayed)
+        get_page_estates(announces, properties)
         page_number += 1
-    return remove_properties(properties)
+    return properties
 
 
 def main(arguments):
@@ -227,12 +256,14 @@ def main(arguments):
     properties = {}
     if params.search in history.keys():
         properties = history[params.search]
-    if params.remove:
-        if properties[str(params.remove)]:
-            properties[str(params.remove)]['status'] = property_status['d']
-    else:
-        properties = find_properties(params, properties, history)
-    save_data(history, properties, params.propiedades, params.search)
+    if params.command == 'listar':
+        if estate_status['n'] in params.categoria:
+            properties = find_properties(params, properties)
+        display_estates(properties, params.categoria, params.tipo_de_unidad, params.operacion, params.browser)
+    elif params.command == 'remover':
+        if properties[str(params.id)]:
+            properties[str(params.id)]['status'] = estate_status['d']
+    save_data(history, remove_tainted(properties), params.propiedades, params.search)
 
 
 if __name__ == '__main__':
